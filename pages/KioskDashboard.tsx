@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getKiosks, saveKiosk, addLog } from '../services/storageService';
-import { Kiosk, Slide, ContentType, User } from '../types';
-import { Edit, Monitor, Play, ExternalLink, Plus, Trash2, Clock, Image as ImageIcon, Globe, Server, Download, FileJson, Code, Wifi, WifiOff, AlertTriangle, FileCode } from 'lucide-react';
+import { getKiosks, saveKiosk, addLog, getSettings, saveSettings } from '../services/storageService';
+import { Kiosk, Slide, ContentType, User, UserRole } from '../types';
+import { Edit, Monitor, Play, Plus, Trash2, Clock, Image as ImageIcon, Globe, Server, Download, FileCode, Settings, FileJson } from 'lucide-react';
 
 interface Props {
   currentUser: User;
@@ -11,6 +11,8 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
   const [kiosks, setKiosks] = useState<Kiosk[]>([]);
   const [selectedKiosk, setSelectedKiosk] = useState<Kiosk | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState(getSettings());
 
   useEffect(() => {
     setKiosks(getKiosks());
@@ -29,15 +31,12 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
       id: newId,
       name: `עמדה חדשה ${kiosks.length + 1}`,
       location: 'מיקום לא מוגדר',
-      status: 'offline',
       slides: []
     };
     
     // Save to local storage
     saveKiosk(newKiosk);
-    
-    // Update state immediately to reflect change in UI
-    setKiosks(prevKiosks => [...prevKiosks, newKiosk]);
+    setKiosks(getKiosks());
     
     addLog(currentUser.username, 'CREATE_KIOSK', `נוצרה עמדה חדשה: ${newKiosk.name}`);
   };
@@ -50,16 +49,21 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
   const handleSave = () => {
     if (selectedKiosk) {
       saveKiosk(selectedKiosk);
-      
-      // Update the specific kiosk in the local state list
       setKiosks(prevKiosks => 
         prevKiosks.map(k => k.id === selectedKiosk.id ? selectedKiosk : k)
       );
-      
       addLog(currentUser.username, 'UPDATE_KIOSK', `עדכון הגדרות עבור ${selectedKiosk.name}`);
       setIsEditing(false);
       setSelectedKiosk(null);
     }
+  };
+
+  const handleSaveSettings = (newUrl: string) => {
+      const newSettings = { jsonServerUrl: newUrl };
+      saveSettings(newSettings);
+      setSettings(newSettings);
+      setShowSettings(false);
+      addLog(currentUser.username, 'UPDATE_SETTINGS', 'עודכנה כתובת שרת JSON');
   };
 
   const updateSlide = (index: number, field: keyof Slide, value: any) => {
@@ -73,8 +77,8 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     if (!selectedKiosk) return;
     const newSlide: Slide = {
       id: Date.now().toString(),
-      type: ContentType.IMAGE,
-      url: 'https://picsum.photos/1920/1080',
+      type: ContentType.URL, // Default to URL
+      url: 'https://www.google.com/webhp?igu=1',
       duration: 10,
       title: 'שקופית חדשה'
     };
@@ -87,293 +91,165 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     setSelectedKiosk({ ...selectedKiosk, slides: newSlides });
   };
 
-  // --- HTML Generator Logic ---
-  const downloadGenericPlayer = () => {
+  // --- Master JSON Generation ---
+  const downloadMasterJson = () => {
+    const masterData = {
+        generatedAt: Date.now(),
+        kiosks: kiosks.reduce((acc, k) => {
+            acc[k.id] = {
+                id: k.id,
+                name: k.name,
+                location: k.location,
+                slides: k.slides.map(s => ({
+                    type: s.type, // Will typically be URL now
+                    url: s.url,
+                    duration: s.duration
+                }))
+            };
+            return acc;
+        }, {} as Record<string, any>)
+    };
+
+    const blob = new Blob([JSON.stringify(masterData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kiosk-data.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    addLog(currentUser.username, 'DOWNLOAD_MASTER', 'הורדת קובץ Master JSON');
+  };
+
+  // --- HTML Generator Logic (Smart Player with JSON) ---
+  const downloadSmartPlayer = () => {
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kiosk Generic Player</title>
+    <title>Enterprise Kiosk Player</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        /* Ensure container and iframe are strictly full size */
+        #contentContainer { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
         iframe { width: 100%; height: 100%; border: none; display: block; }
+        
         #loader { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
             color: #888; font-family: sans-serif; text-align: center;
-            z-index: 10;
-            background: rgba(0,0,0,0.8);
-            padding: 2rem;
-            border-radius: 1rem;
+            z-index: 10; background: rgba(0,0,0,0.8); padding: 2rem; border-radius: 1rem;
         }
         .error { color: #ff6b6b; margin-bottom: 10px; }
-        .config-info { position: absolute; bottom: 10px; right: 10px; color: rgba(255,255,255,0.3); font-family: monospace; font-size: 10px; pointer-events: none; z-index: 20; }
-        input { background: #333; border: 1px solid #555; color: white; padding: 5px; border-radius: 4px; width: 300px; margin-top: 10px; }
-        button { background: #3b82f6; border: none; color: white; padding: 5px 15px; border-radius: 4px; cursor: pointer; margin-left: 5px; }
-        button:hover { background: #2563eb; }
+        .info-bar { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.5); color: white; padding: 5px; font-size: 10px; font-family: monospace; display: flex; justify-content: space-between; pointer-events: none; z-index: 20; }
     </style>
 </head>
 <body>
     <div id="loader">
-        <div style="margin-bottom: 10px; font-size: 24px; color: white;">Kiosk Player</div>
-        <div id="statusText" style="font-size: 14px; color: #ccc;">Loading configuration...</div>
-        <div id="errorControls" style="display:none; margin-top: 20px;">
-            <div style="font-size: 12px; color: #aaa; margin-bottom: 5px;">Update Config URL:</div>
-            <input type="text" id="configUrlInput" placeholder="http://..." />
-            <button onclick="retryWithNewUrl()">Retry</button>
-        </div>
+        <div style="margin-bottom: 10px; font-size: 24px; color: white;">Enterprise Kiosk</div>
+        <div id="statusText" style="font-size: 14px; color: #ccc;">Loading Config...</div>
     </div>
     
-    <iframe id="contentFrame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-    <div id="sourceDisplay" class="config-info"></div>
+    <div id="contentContainer"></div>
+    <div class="info-bar">
+        <span id="kioskIdDisplay">ID: --</span>
+        <span id="sourceDisplay">Source: --</span>
+    </div>
 
     <script>
         /**
          * =================================================================================
-         * CONFIGURATION SECTION
-         * =================================================================================
-         * You can set the JSON source URL here.
-         * 
-         * OPTIONS:
-         * 1. Relative path: 'config.json' (if the file is on the same machine/folder)
-         * 2. Absolute URL: 'https://myserver.com/api/kiosk-data.json'
-         * 
-         * You can also override this by adding ?source=YOUR_URL to the browser URL.
+         * CONFIGURATION
          * =================================================================================
          */
          
-        let currentApiUrl = 'config.json'; 
+        const MASTER_JSON_URL = '${settings.jsonServerUrl}'; 
 
         /** ================================================================================= */
 
-        // Initialize
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('source')) {
-            currentApiUrl = urlParams.get('source');
-        }
-        
-        // Setup UI
-        document.getElementById('configUrlInput').value = currentApiUrl;
-        updateSourceDisplay();
+        const kioskId = urlParams.get('id');
 
-        let config = null;
+        document.getElementById('sourceDisplay').innerText = MASTER_JSON_URL;
+        document.getElementById('kioskIdDisplay').innerText = 'ID: ' + (kioskId || 'MISSING');
 
-        function updateSourceDisplay() {
-            document.getElementById('sourceDisplay').innerText = 'Source: ' + currentApiUrl;
-        }
+        let kioskData = null;
+        let currentSlideIndex = 0;
+        let slideTimeout = null;
 
-        window.retryWithNewUrl = function() {
-            const newUrl = document.getElementById('configUrlInput').value;
-            if (newUrl) {
-                currentApiUrl = newUrl;
-                updateSourceDisplay();
-                document.getElementById('statusText').innerHTML = 'Retrying...';
-                document.getElementById('statusText').className = '';
-                document.getElementById('errorControls').style.display = 'none';
-                fetchConfig();
-            }
-        };
-
-        async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        async function fetchConfig() {
-            try {
-                console.log('Fetching configuration from ' + currentApiUrl);
-                
-                // Warn about file protocol if using http source
-                if (window.location.protocol === 'file:' && currentApiUrl.startsWith('http')) {
-                    console.warn('CORS Warning: Fetching http resource from file protocol may fail.');
-                }
-
-                // Add timestamp to prevent caching
-                const separator = currentApiUrl.includes('?') ? '&' : '?';
-                const cacheBusterUrl = currentApiUrl + separator + 't=' + Date.now();
-                
-                const response = await fetch(cacheBusterUrl, { cache: 'no-store' });
-                
-                if (!response.ok) throw new Error('HTTP Status: ' + response.status);
-                
-                const text = await response.text();
-                try {
-                    config = JSON.parse(text);
-                } catch (e) {
-                    throw new Error('Invalid JSON format');
-                }
-
-                document.getElementById('loader').style.display = 'none';
-                
-                // Start rotation logic
-                runLoop();
-
-            } catch (error) {
-                console.error('Fetch failed', error);
-                const loader = document.getElementById('loader');
-                const statusText = document.getElementById('statusText');
-                const errorControls = document.getElementById('errorControls');
-                
-                loader.style.display = 'block';
-                statusText.className = 'error';
-                statusText.innerHTML = '<strong>Connection Failed</strong><br>' + error.message;
-                
-                if (window.location.protocol === 'file:' && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
-                    statusText.innerHTML += '<br><br><span style="color:#aaa; font-size:12px">Tip: If opening locally, Chrome blocks AJAX. Try using a local server or Firefox.</span>';
-                }
-
-                errorControls.style.display = 'block';
-                
-                // Auto retry after 30 seconds
-                setTimeout(() => {
-                    if (loader.style.display !== 'none') {
-                        fetchConfig();
-                    }
-                }, 30000);
-            }
-        }
-
-        async function runLoop() {
-            if (!config || !config.sites || !Array.isArray(config.sites) || config.sites.length === 0) {
-                console.warn('No sites in config');
-                document.getElementById('loader').style.display = 'block';
-                document.getElementById('statusText').innerText = 'Configuration loaded but contains no sites.';
-                await sleep(5000);
-                fetchConfig(); 
-                return;
-            }
-
-            const intervalMs = (config.interval || 10) * 1000;
-
-            for (const siteUrl of config.sites) {
-                console.log('Displaying: ' + siteUrl);
-                const frame = document.getElementById('contentFrame');
-                
-                // Simply setting src is usually enough. 
-                // Browsers might not reload if src is identical.
-                // We rely on the rotation to keep things fresh.
-                frame.src = siteUrl;
-                
-                // Wait for interval
-                await sleep(intervalMs);
-            }
-
-            // End of loop - Reload JSON to check for updates
-            console.log('Loop finished. Checking for updates...');
+        if (!kioskId) {
+            showError('Missing "id" parameter in URL.');
+        } else {
             fetchConfig();
         }
 
-        // Start the player
-        fetchConfig();
-    </script>
-</body>
-</html>`;
-
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `generic-player.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadHtmlPlayer = (kiosk: Kiosk) => {
-    const htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kiosk Player - ${kiosk.name}</title>
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
-        iframe { width: 100%; height: 100%; border: none; display: block; }
-        #loader { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            color: #888; font-family: sans-serif; text-align: center;
-        }
-        .error { color: #ff4444; }
-    </style>
-</head>
-<body>
-    <div id="loader">
-        <div style="margin-bottom: 10px; font-size: 24px;">Connecting to server...</div>
-        <div style="font-size: 14px;">ID: <span id="kioskIdDisplay"></span></div>
-    </div>
-    <iframe id="contentFrame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-
-    <script>
-        // 1. Read 'id' from URL parameter
-        const params = new URLSearchParams(window.location.search);
-        // Default to the downloaded ID if param is missing
-        const kioskId = params.get('id') || '${kiosk.id}'; 
-        document.getElementById('kioskIdDisplay').innerText = kioskId;
-
-        // Configuration
-        // In a real scenario, change this to your actual API endpoint
-        // e.g. 'https://my-server.com/api/' + kioskId + '.json'
-        // Here we assume the JSON file is in the same directory as this HTML file
-        const API_URL = kioskId + '.json'; 
-        
-        let config = null;
-
-        async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
+        function showError(msg) {
+            const el = document.getElementById('statusText');
+            el.innerHTML = msg;
+            el.className = 'error';
+            document.getElementById('loader').style.display = 'block';
         }
 
         async function fetchConfig() {
             try {
-                console.log('Fetching configuration from ' + API_URL);
-                // 3. Prevent Caching (Timestamp)
-                const response = await fetch(API_URL + '?t=' + Date.now());
+                console.log('Fetching config from ' + MASTER_JSON_URL);
+                const response = await fetch(MASTER_JSON_URL + '?t=' + Date.now(), { cache: 'no-store' });
                 
-                if (!response.ok) throw new Error('Status: ' + response.status);
+                if (!response.ok) throw new Error('HTTP ' + response.status);
                 
-                config = await response.json();
+                const masterData = await response.json();
+                
+                if (!masterData.kiosks || !masterData.kiosks[kioskId]) {
+                    throw new Error('Kiosk ID "' + kioskId + '" not found in Master JSON.');
+                }
+
+                kioskData = masterData.kiosks[kioskId];
                 document.getElementById('loader').style.display = 'none';
                 
-                // Start rotation logic
-                runLoop();
+                // Start Loop
+                startSlideshow();
 
             } catch (error) {
-                console.error('Fetch failed', error);
-                const loader = document.getElementById('loader');
-                loader.style.display = 'block';
-                loader.innerHTML = '<div class="error" style="font-size:24px">Connection Failed</div><br>Retrying in 30s...';
-                
-                // 5. Robustness: Retry after 30 seconds
+                console.error(error);
+                showError('Connection Failed: ' + error.message + '<br>Retrying in 30s...');
                 setTimeout(fetchConfig, 30000);
             }
         }
 
-        async function runLoop() {
-            if (!config || !config.sites || config.sites.length === 0) {
-                console.warn('No sites in config');
-                await sleep(5000);
-                fetchConfig(); // Retry fetch
+        function startSlideshow() {
+            if (!kioskData || !kioskData.slides || kioskData.slides.length === 0) {
+                showError('No slides assigned to this kiosk.');
+                setTimeout(fetchConfig, 30000);
                 return;
             }
 
-            // 4. Rotation Logic
-            const intervalMs = (config.interval || 10) * 1000;
-
-            for (const siteUrl of config.sites) {
-                console.log('Displaying: ' + siteUrl);
-                const frame = document.getElementById('contentFrame');
-                frame.src = siteUrl;
-                
-                // Wait for interval
-                await sleep(intervalMs);
-            }
-
-            // 2. End of loop - Reload JSON
-            console.log('Loop finished. Reloading config...');
-            fetchConfig();
+            showSlide(currentSlideIndex);
         }
 
-        // Start
-        fetchConfig();
+        function showSlide(index) {
+            clearTimeout(slideTimeout);
+            
+            const slide = kioskData.slides[index];
+            const container = document.getElementById('contentContainer');
+            
+            // Render Content
+            container.innerHTML = ''; 
+            
+            // Treat everything as a URL (iframe)
+            const iframe = document.createElement('iframe');
+            iframe.src = slide.url;
+            iframe.sandbox = "allow-scripts allow-same-origin allow-forms";
+            container.appendChild(iframe);
+
+            // Schedule Next
+            const duration = (slide.duration || 10) * 1000;
+            slideTimeout = setTimeout(() => {
+                currentSlideIndex = (currentSlideIndex + 1) % kioskData.slides.length;
+                showSlide(currentSlideIndex);
+            }, duration);
+        }
     </script>
 </body>
 </html>`;
@@ -382,26 +258,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${kiosk.id}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadJsonConfig = (kiosk: Kiosk) => {
-    // Map existing slides to the simple structure requested: { interval: number, sites: [] }
-    // We use the first slide's duration as the global interval for this simplified format
-    const simplifiedConfig = {
-      interval: kiosk.slides[0]?.duration || 10,
-      sites: kiosk.slides.map(s => s.url)
-    };
-
-    const blob = new Blob([JSON.stringify(simplifiedConfig, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${kiosk.id}.json`;
+    a.download = `smart-player.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -415,19 +272,42 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
           <h2 className="text-3xl font-bold text-white mb-2">ניהול עמדות קיוסק</h2>
           <div className="text-slate-400 flex items-center gap-2">
             <Server size={16} />
-            סה"כ עמדות פעילות: <span className="text-blue-400 font-bold">{kiosks.length}</span>
+            סה"כ עמדות: <span className="text-blue-400 font-bold">{kiosks.length}</span>
           </div>
         </div>
         
         <div className="flex gap-3">
+          {currentUser.role === UserRole.ADMIN && (
+             <>
+               <button 
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 px-4 py-3 rounded-xl transition-all"
+                title="הגדרות מערכת"
+               >
+                 <Settings size={20} />
+               </button>
+
+               <button 
+                type="button"
+                onClick={downloadMasterJson}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95"
+                title="הורד קובץ הגדרות מצרפי (JSON)"
+               >
+                 <FileJson size={20} />
+                 <span>Master JSON</span>
+               </button>
+             </>
+          )}
+
           <button 
             type="button"
-            onClick={downloadGenericPlayer}
+            onClick={downloadSmartPlayer}
             className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-200 px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95"
-            title="הורד נגן HTML עצמאי שקורא קובץ config.json"
+            title="הורד נגן Smart HTML שקורא מקובץ ה-JSON"
           >
             <FileCode size={20} />
-            <span>הורד נגן עצמאי</span>
+            <span>הורד נגן (Smart)</span>
           </button>
 
           <button 
@@ -436,43 +316,19 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg shadow-blue-900/20 active:scale-95"
           >
             <Plus size={20} />
-            <span>הוסף עמדה חדשה</span>
+            <span>הוסף עמדה</span>
           </button>
         </div>
       </div>
 
       {/* Kiosk Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {kiosks.map((kiosk) => (
-          <div key={kiosk.id} className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 hover:border-slate-600 hover:shadow-2xl transition-all p-5 flex flex-col group">
+        {kiosks.map((kiosk) => {
+          return (
+          <div key={kiosk.id} className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 hover:border-slate-600 transition-all p-5 flex flex-col group">
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2" title={`Status: ${kiosk.status}`}>
-                {kiosk.status === 'online' && (
-                  <Wifi size={16} className="text-green-500 drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                )}
-                {kiosk.status === 'offline' && (
-                  <WifiOff size={16} className="text-slate-500" />
-                )}
-                {kiosk.status === 'maintenance' && (
-                  <AlertTriangle size={16} className="text-yellow-500 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" />
-                )}
-                <span className="text-[10px] font-mono text-slate-500 uppercase">{kiosk.id.split('-')[0]}..</span>
-              </div>
-              <div className="flex gap-1">
-                 <button 
-                   onClick={() => downloadHtmlPlayer(kiosk)}
-                   className="text-slate-500 hover:text-blue-400 p-1 rounded transition-colors"
-                   title="הורד קובץ HTML (Player)"
-                 >
-                   <Code size={16} />
-                 </button>
-                 <button 
-                   onClick={() => downloadJsonConfig(kiosk)}
-                   className="text-slate-500 hover:text-yellow-400 p-1 rounded transition-colors"
-                   title="הורד קובץ JSON (Config)"
-                 >
-                   <FileJson size={16} />
-                 </button>
+              <div className="flex items-center gap-2">
+                <span className="bg-slate-700 text-slate-300 text-[10px] font-mono px-2 py-0.5 rounded uppercase">{kiosk.id.split('-')[1]}</span>
               </div>
             </div>
             
@@ -502,8 +358,50 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               </button>
             </div>
           </div>
-        ))}
+        )})}
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+           <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg">
+              <div className="p-6 border-b border-slate-800">
+                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <Settings className="text-blue-500" />
+                      הגדרות שרת (IIS)
+                  </h3>
+              </div>
+              <div className="p-6">
+                  <p className="text-slate-400 text-sm mb-4">
+                      כדי שהנגנים יעבדו, עליך לייצא את קובץ ה-Master JSON ולמקם אותו בשרת ה-IIS שלך.
+                      <br/>
+                      הזן כאן את כתובת ה-URL המלאה שבה הקובץ יהיה זמין.
+                  </p>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Master JSON URL</label>
+                  <input 
+                      type="text" 
+                      defaultValue={settings.jsonServerUrl}
+                      id="setting-url"
+                      className="w-full bg-slate-800 border border-slate-600 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none dir-ltr font-mono text-sm"
+                      placeholder="http://your-server/kiosk-data.json"
+                      dir="ltr"
+                  />
+              </div>
+              <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-2xl">
+                  <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">ביטול</button>
+                  <button 
+                    onClick={() => {
+                        const val = (document.getElementById('setting-url') as HTMLInputElement).value;
+                        handleSaveSettings(val);
+                    }} 
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow-lg"
+                  >
+                      שמור הגדרות
+                  </button>
+              </div>
+           </div>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {isEditing && selectedKiosk && (
@@ -534,18 +432,6 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                      className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
                    />
                  </div>
-                 <div>
-                   <label className="block text-sm font-medium text-slate-400 mb-2">סטטוס</label>
-                   <select 
-                     value={selectedKiosk.status}
-                     onChange={(e) => setSelectedKiosk({...selectedKiosk, status: e.target.value as 'online' | 'offline' | 'maintenance'})}
-                     className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                   >
-                     <option value="online">Online</option>
-                     <option value="offline">Offline</option>
-                     <option value="maintenance">Maintenance</option>
-                   </select>
-                 </div>
               </div>
 
               <div className="mb-6 flex justify-between items-end border-b border-slate-800 pb-4">
@@ -566,30 +452,8 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                     </div>
                     
                     <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-6">
-                      <div className="md:col-span-3">
-                        <label className="block text-xs font-medium text-slate-500 mb-2">סוג תוכן</label>
-                        <div className="flex rounded-lg border border-slate-700 bg-slate-900 p-1">
-                           <button 
-                             type="button"
-                             onClick={() => updateSlide(idx, 'type', ContentType.IMAGE)}
-                             className={`flex-1 py-2 rounded-md flex justify-center transition-all ${slide.type === ContentType.IMAGE ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
-                             title="תמונה"
-                           >
-                             <ImageIcon size={18} />
-                           </button>
-                           <button 
-                             type="button"
-                             onClick={() => updateSlide(idx, 'type', ContentType.URL)}
-                             className={`flex-1 py-2 rounded-md flex justify-center transition-all ${slide.type === ContentType.URL ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
-                             title="אתר אינטרנט"
-                           >
-                             <Globe size={18} />
-                           </button>
-                        </div>
-                      </div>
-
-                      <div className="md:col-span-6">
-                        <label className="block text-xs font-medium text-slate-500 mb-2">כתובת URL / תמונה</label>
+                      <div className="md:col-span-9">
+                        <label className="block text-xs font-medium text-slate-500 mb-2">כתובת URL</label>
                         <input 
                            type="text" 
                            value={slide.url}

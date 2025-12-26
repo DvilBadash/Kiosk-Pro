@@ -102,22 +102,14 @@ const ClientPlayer: React.FC = () => {
     <div ref={containerRef} className="h-screen w-screen bg-black relative overflow-hidden group cursor-none">
       {/* Content */}
       <div className="absolute inset-0 w-full h-full">
-        {slide.type === ContentType.IMAGE ? (
-           <img 
-             src={slide.url} 
-             alt="Slide" 
-             className="w-full h-full object-cover animate-in fade-in duration-1000"
-           />
-        ) : (
-          <iframe
-            key={slide.id} // Re-mount iframe on change to reset state
-            src={slide.url}
-            className="w-full h-full border-0 animate-in fade-in duration-500"
-            title="Kiosk Content"
-            sandbox="allow-scripts allow-same-origin allow-forms"
-            allow="autoplay"
-          />
-        )}
+        <iframe
+          key={slide.id} // Re-mount iframe on change to reset state
+          src={slide.url}
+          className="w-full h-full border-0 animate-in fade-in duration-500"
+          title="Kiosk Content"
+          sandbox="allow-scripts allow-same-origin allow-forms"
+          allow="autoplay"
+        />
       </div>
 
       {/* Info Overlay (Hidden in fullscreen usually, but useful for debugging/status) */}
@@ -129,10 +121,6 @@ const ClientPlayer: React.FC = () => {
               <div className="flex justify-between">
                   <span>שקופית:</span>
                   <span className="text-white">{currentSlideIndex + 1} / {kiosk.slides.length}</span>
-              </div>
-              <div className="flex justify-between">
-                  <span>סוג:</span>
-                  <span className="text-white">{slide.type}</span>
               </div>
               <div className="flex justify-between">
                   <span>זמן:</span>

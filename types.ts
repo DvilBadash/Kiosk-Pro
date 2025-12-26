@@ -28,8 +28,6 @@ export interface Kiosk {
   name: string;
   location: string;
   slides: Slide[];
-  lastHeartbeat?: number;
-  status: 'online' | 'offline' | 'maintenance';
 }
 
 export interface LogEntry {
@@ -43,4 +41,8 @@ export interface LogEntry {
 export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+}
+
+export interface SystemSettings {
+  jsonServerUrl: string; // The URL on the IIS server where the master JSON is hosted
 }

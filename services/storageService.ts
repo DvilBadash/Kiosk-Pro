@@ -1,8 +1,9 @@
-import { Kiosk, User, UserRole, LogEntry, ContentType } from '../types';
+import { Kiosk, User, UserRole, LogEntry, ContentType, SystemSettings } from '../types';
 
 const KIOSKS_KEY = 'kmp_kiosks';
 const USERS_KEY = 'kmp_users';
 const LOGS_KEY = 'kmp_logs';
+const SETTINGS_KEY = 'kmp_settings';
 
 // Initialize default data if empty
 const initStorage = () => {
@@ -21,21 +22,20 @@ const initStorage = () => {
       id: `kiosk-${i + 1}`,
       name: `קיוסק ייצור ${i + 1}`,
       location: `אולם ${Math.floor(i / 5) + 1}`,
-      status: 'offline',
       slides: [
         {
           id: `slide-${i}-1`,
-          type: ContentType.IMAGE,
-          url: `https://picsum.photos/seed/${i}/1920/1080`,
+          type: ContentType.URL,
+          url: `https://www.wikipedia.org/`,
           duration: 10,
-          title: 'תמונת אווירה'
+          title: 'ויקיפדיה'
         },
         {
           id: `slide-${i}-2`,
           type: ContentType.URL,
-          url: 'https://www.wikipedia.org/',
+          url: 'https://www.google.com/webhp?igu=1',
           duration: 15,
-          title: 'ויקיפדיה'
+          title: 'Google'
         }
       ]
     }));
@@ -103,4 +103,16 @@ export const addLog = (username: string, action: string, details: string): void 
   // Keep last 100 logs
   const updatedLogs = [newLog, ...logs].slice(0, 100);
   localStorage.setItem(LOGS_KEY, JSON.stringify(updatedLogs));
+};
+
+// System Settings
+export const getSettings = (): SystemSettings => {
+  const defaults: SystemSettings = {
+    jsonServerUrl: 'http://localhost/kiosk-data.json'
+  };
+  return JSON.parse(localStorage.getItem(SETTINGS_KEY) || JSON.stringify(defaults));
+};
+
+export const saveSettings = (settings: SystemSettings): void => {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 };
