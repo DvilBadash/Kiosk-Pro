@@ -289,7 +289,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 document.getElementById('statusText').innerText = "DB Loaded. Querying...";
 
                 // 4. Check Status (isActive)
-                const statusStmt = db.prepare("SELECT is_active FROM kiosks WHERE id = :id");
+                const statusStmt = db.prepare("SELECT is_active, name FROM kiosks WHERE id = :id");
                 statusStmt.bind({':id': kioskId});
                 if (!statusStmt.step()) {
                     throw new Error('Kiosk ID not found in database.');
@@ -298,7 +298,19 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 statusStmt.free();
 
                 if (!statusRow.is_active) {
-                    showError('Kiosk is disabled by administrator.');
+                    // Nice UI for inactive state
+                    document.body.innerHTML = \`
+                        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#0f172a; color:#94a3b8; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; direction:rtl;">
+                            <div style="background:rgba(127,29,29,0.2); padding:2rem; border-radius:50%; margin-bottom:1.5rem;">
+                                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                                    <line x1="12" y1="2" x2="12" y2="12"></line>
+                                </svg>
+                            </div>
+                            <h1 style="color:white; margin:0 0 0.5rem 0; font-size:2.5rem; font-weight:700;">העמדה אינה פעילה</h1>
+                            <p style="font-size:1.2rem;">העמדה <span style="color:#f87171; font-weight:bold;">\${statusRow.name}</span> הוגדרה ככבויה במערכת הניהול.</p>
+                        </div>
+                    \`;
                     return; 
                 }
 

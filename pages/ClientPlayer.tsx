@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { getKioskById } from '../services/storageService';
 import { Kiosk, ContentType } from '../types';
-import { WifiOff, Maximize, AlertCircle, Loader2 } from 'lucide-react';
+import { WifiOff, Maximize, AlertCircle, Loader2, Power } from 'lucide-react';
 
 const ClientPlayer: React.FC = () => {
   const { kioskId } = useParams<{ kioskId: string }>();
@@ -31,7 +31,7 @@ const ClientPlayer: React.FC = () => {
 
   // Handle Rotation
   useEffect(() => {
-    if (!kiosk || kiosk.slides.length === 0) return;
+    if (!kiosk || kiosk.slides.length === 0 || !kiosk.isActive) return;
 
     const currentSlide = kiosk.slides[currentSlideIndex];
     // Safety check if index is out of bounds due to deletion
@@ -79,6 +79,18 @@ const ClientPlayer: React.FC = () => {
       <div className="h-screen w-screen bg-slate-950 flex items-center justify-center flex-col">
         <Loader2 className="animate-spin text-blue-500 mb-4" size={64} />
         <p className="text-slate-400 animate-pulse">טוען הגדרות...</p>
+      </div>
+    );
+  }
+
+  if (!kiosk.isActive) {
+    return (
+      <div className="h-screen w-screen bg-slate-950 flex items-center justify-center flex-col text-slate-400">
+        <div className="bg-red-900/20 p-8 rounded-full mb-6">
+            <Power size={64} className="text-red-500" />
+        </div>
+        <h2 className="text-3xl font-bold text-white mb-2">העמדה אינה פעילה</h2>
+        <p className="text-lg">העמדה <span className="text-red-400 font-bold">{kiosk.name}</span> הוגדרה ככבויה במערכת הניהול.</p>
       </div>
     );
   }
