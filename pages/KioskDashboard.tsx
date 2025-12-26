@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getKiosks, saveKiosk, addLog, getSettings, saveSettings } from '../services/storageService';
 import { Kiosk, Slide, ContentType, User, UserRole } from '../types';
-import { Edit, Monitor, Play, Plus, Trash2, Clock, Image as ImageIcon, Globe, Server, Download, FileCode, Settings, FileJson } from 'lucide-react';
+import { Edit, Monitor, Play, Plus, Trash2, Clock, Image as ImageIcon, Globe, Server, Download, FileCode, Settings, Database, Loader2 } from 'lucide-react';
 
 interface Props {
   currentUser: User;
@@ -13,9 +13,24 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState(getSettings());
+  const [isSaving, setIsSaving] = useState(false);
+  const [sqlJsLoaded, setSqlJsLoaded] = useState(false);
 
   useEffect(() => {
     setKiosks(getKiosks());
+    
+    // Dynamically load sql.js from CDN if not already loaded
+    if (!(window as any).initSqlJs) {
+        const script = document.createElement('script');
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js";
+        script.onload = () => {
+            setSqlJsLoaded(true);
+            console.log("SQL.js loaded");
+        };
+        document.head.appendChild(script);
+    } else {
+        setSqlJsLoaded(true);
+    }
   }, []);
 
   const openClient = (id: string) => {
@@ -46,24 +61,110 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     setIsEditing(true);
   };
 
-  const handleSave = () => {
-    if (selectedKiosk) {
+  // --- Helper to generate the SQLite Database (Binary) ---
+  const generateSQLiteDB = async (kiosksList: Kiosk[]): Promise<Uint8Array> => {
+    if (!sqlJsLoaded || !(window as any).initSqlJs) {
+        throw new Error("SQL.js library not loaded yet");
+    }
+
+    const SQL = await (window as any).initSqlJs({
+        locateFile: (file: string) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+    });
+
+    const db = new SQL.Database();
+
+    // Create Tables
+    db.run("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);");
+    db.run("CREATE TABLE kiosks (id TEXT PRIMARY KEY, name TEXT, location TEXT);");
+    db.run("CREATE TABLE slides (id TEXT PRIMARY KEY, kiosk_id TEXT, type TEXT, url TEXT, duration INTEGER, sort_order INTEGER, title TEXT);");
+
+    // Insert Metadata
+    db.run("INSERT INTO metadata VALUES (?, ?)", ["generatedAt", Date.now().toString()]);
+
+    // Insert Data
+    for (const kiosk of kiosksList) {
+        db.run("INSERT INTO kiosks VALUES (?, ?, ?)", [kiosk.id, kiosk.name, kiosk.location]);
+        
+        kiosk.slides.forEach((slide, index) => {
+            db.run("INSERT INTO slides VALUES (?, ?, ?, ?, ?, ?, ?)", [
+                slide.id,
+                kiosk.id,
+                slide.type,
+                slide.url,
+                slide.duration,
+                index, // for sorting
+                slide.title || ''
+            ]);
+        });
+    }
+
+    // Export to Uint8Array
+    const binaryArray = db.export();
+    return binaryArray;
+  };
+
+  const handleSave = async () => {
+    if (!selectedKiosk) return;
+
+    setIsSaving(true);
+
+    try {
+      // 1. Update Local Storage first (Safety)
       saveKiosk(selectedKiosk);
-      setKiosks(prevKiosks => 
-        prevKiosks.map(k => k.id === selectedKiosk.id ? selectedKiosk : k)
-      );
-      addLog(currentUser.username, 'UPDATE_KIOSK', `עדכון הגדרות עבור ${selectedKiosk.name}`);
+      
+      const updatedKiosks = kiosks.map(k => k.id === selectedKiosk.id ? selectedKiosk : k);
+      setKiosks(updatedKiosks);
+
+      // 2. Generate SQLite Binary
+      let dbBlob: Blob;
+      try {
+        const binaryData = await generateSQLiteDB(updatedKiosks);
+        dbBlob = new Blob([binaryData], { type: 'application/x-sqlite3' });
+      } catch (e: any) {
+        throw new Error("Failed to generate DB: " + e.message);
+      }
+
+      // 3. Attempt to push to Server
+      try {
+        if (!settings.dbServerUrl || (settings.dbServerUrl.includes('localhost') && window.location.protocol === 'https:')) {
+           // check mixed content
+        }
+
+        const response = await fetch(settings.dbServerUrl, {
+            method: 'POST', 
+            headers: {
+            'Content-Type': 'application/x-sqlite3',
+            },
+            body: dbBlob
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+        }
+
+        addLog(currentUser.username, 'UPDATE_KIOSK', `עודכן בהצלחה (מקומי + DB): ${selectedKiosk.name}`);
+
+      } catch (networkError: any) {
+        console.warn('Remote sync failed:', networkError);
+        addLog(currentUser.username, 'UPDATE_LOCAL_ONLY', `נשמר מקומית בלבד (שרת לא זמין): ${selectedKiosk.name}`);
+      }
+
+    } catch (error: any) {
+      console.error('Critical Save failed:', error);
+      alert(`שגיאה קריטית בשמירה: ${error.message}`);
+    } finally {
+      setIsSaving(false);
       setIsEditing(false);
       setSelectedKiosk(null);
     }
   };
 
   const handleSaveSettings = (newUrl: string) => {
-      const newSettings = { jsonServerUrl: newUrl };
+      const newSettings = { dbServerUrl: newUrl };
       saveSettings(newSettings);
       setSettings(newSettings);
       setShowSettings(false);
-      addLog(currentUser.username, 'UPDATE_SETTINGS', 'עודכנה כתובת שרת JSON');
+      addLog(currentUser.username, 'UPDATE_SETTINGS', 'עודכנה כתובת שרת DB');
   };
 
   const updateSlide = (index: number, field: keyof Slide, value: any) => {
@@ -80,7 +181,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
       type: ContentType.URL, // Default to URL
       url: 'https://www.google.com/webhp?igu=1',
       duration: 10,
-      title: 'שקופית חדשה'
+      title: 'קישור חדש'
     };
     setSelectedKiosk({ ...selectedKiosk, slides: [...selectedKiosk.slides, newSlide] });
   };
@@ -91,49 +192,37 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     setSelectedKiosk({ ...selectedKiosk, slides: newSlides });
   };
 
-  // --- Master JSON Generation ---
-  const downloadMasterJson = () => {
-    const masterData = {
-        generatedAt: Date.now(),
-        kiosks: kiosks.reduce((acc, k) => {
-            acc[k.id] = {
-                id: k.id,
-                name: k.name,
-                location: k.location,
-                slides: k.slides.map(s => ({
-                    type: s.type, // Will typically be URL now
-                    url: s.url,
-                    duration: s.duration
-                }))
-            };
-            return acc;
-        }, {} as Record<string, any>)
-    };
-
-    const blob = new Blob([JSON.stringify(masterData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `kiosk-data.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    addLog(currentUser.username, 'DOWNLOAD_MASTER', 'הורדת קובץ Master JSON');
+  // --- Master DB Generation (Download) ---
+  const downloadMasterDb = async () => {
+    try {
+        const binaryData = await generateSQLiteDB(kiosks);
+        const blob = new Blob([binaryData], { type: 'application/x-sqlite3' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `master.sqlite`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        addLog(currentUser.username, 'DOWNLOAD_DB', 'הורדת קובץ Master DB');
+    } catch (e: any) {
+        alert("שגיאה ביצירת מסד הנתונים: " + e.message);
+    }
   };
 
-  // --- HTML Generator Logic (Smart Player with JSON) ---
+  // --- HTML Generator Logic (Smart Player with SQL) ---
   const downloadSmartPlayer = () => {
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enterprise Kiosk Player</title>
+    <title>Enterprise Kiosk Player (SQL)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
-        /* Ensure container and iframe are strictly full size */
         #contentContainer { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
         iframe { width: 100%; height: 100%; border: none; display: block; }
         
@@ -149,40 +238,32 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 <body>
     <div id="loader">
         <div style="margin-bottom: 10px; font-size: 24px; color: white;">Enterprise Kiosk</div>
-        <div id="statusText" style="font-size: 14px; color: #ccc;">Loading Config...</div>
+        <div id="statusText" style="font-size: 14px; color: #ccc;">Loading Database...</div>
     </div>
     
     <div id="contentContainer"></div>
     <div class="info-bar">
         <span id="kioskIdDisplay">ID: --</span>
-        <span id="sourceDisplay">Source: --</span>
+        <span id="sourceDisplay">DB: --</span>
     </div>
 
     <script>
-        /**
-         * =================================================================================
-         * CONFIGURATION
-         * =================================================================================
-         */
-         
-        const MASTER_JSON_URL = '${settings.jsonServerUrl}'; 
-
-        /** ================================================================================= */
-
+        const DB_URL = '${settings.dbServerUrl}'; 
         const urlParams = new URLSearchParams(window.location.search);
         const kioskId = urlParams.get('id');
 
-        document.getElementById('sourceDisplay').innerText = MASTER_JSON_URL;
+        document.getElementById('sourceDisplay').innerText = DB_URL;
         document.getElementById('kioskIdDisplay').innerText = 'ID: ' + (kioskId || 'MISSING');
 
-        let kioskData = null;
+        let db = null;
+        let slides = [];
         let currentSlideIndex = 0;
         let slideTimeout = null;
 
         if (!kioskId) {
             showError('Missing "id" parameter in URL.');
         } else {
-            fetchConfig();
+            initSystem();
         }
 
         function showError(msg) {
@@ -192,61 +273,75 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             document.getElementById('loader').style.display = 'block';
         }
 
-        async function fetchConfig() {
+        async function initSystem() {
             try {
-                console.log('Fetching config from ' + MASTER_JSON_URL);
-                const response = await fetch(MASTER_JSON_URL + '?t=' + Date.now(), { cache: 'no-store' });
-                
+                // 1. Load SQL.js
+                const SQL = await window.initSqlJs({
+                    locateFile: file => \`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/\${file}\`
+                });
+
+                // 2. Fetch Database File
+                console.log('Fetching DB from ' + DB_URL);
+                const response = await fetch(DB_URL + '?t=' + Date.now());
                 if (!response.ok) throw new Error('HTTP ' + response.status);
+                const buf = await response.arrayBuffer();
+
+                // 3. Open Database
+                db = new SQL.Database(new Uint8Array(buf));
+                document.getElementById('statusText').innerText = "DB Loaded. Querying...";
+
+                // 4. Query Slides
+                // Note: We use prepare/bind/step for safety, though inputs are trusted
+                const stmt = db.prepare("SELECT url, duration, type FROM slides WHERE kiosk_id = :id ORDER BY sort_order ASC");
+                stmt.bind({':id': kioskId});
                 
-                const masterData = await response.json();
-                
-                if (!masterData.kiosks || !masterData.kiosks[kioskId]) {
-                    throw new Error('Kiosk ID "' + kioskId + '" not found in Master JSON.');
+                slides = [];
+                while(stmt.step()) {
+                    const row = stmt.getAsObject();
+                    slides.push(row);
+                }
+                stmt.free();
+
+                if (slides.length === 0) {
+                    // Check if kiosk exists just to give better error
+                    const kStmt = db.prepare("SELECT name FROM kiosks WHERE id = :id");
+                    kStmt.bind({':id': kioskId});
+                    if(kStmt.step()) {
+                        throw new Error('Kiosk found but has no slides.');
+                    } else {
+                        throw new Error('Kiosk ID not found in database.');
+                    }
                 }
 
-                kioskData = masterData.kiosks[kioskId];
                 document.getElementById('loader').style.display = 'none';
-                
-                // Start Loop
                 startSlideshow();
 
             } catch (error) {
                 console.error(error);
-                showError('Connection Failed: ' + error.message + '<br>Retrying in 30s...');
-                setTimeout(fetchConfig, 30000);
+                showError('System Error: ' + error.message + '<br>Retrying in 30s...');
+                setTimeout(initSystem, 30000);
             }
         }
 
         function startSlideshow() {
-            if (!kioskData || !kioskData.slides || kioskData.slides.length === 0) {
-                showError('No slides assigned to this kiosk.');
-                setTimeout(fetchConfig, 30000);
-                return;
-            }
-
+            if (slides.length === 0) return;
             showSlide(currentSlideIndex);
         }
 
         function showSlide(index) {
             clearTimeout(slideTimeout);
-            
-            const slide = kioskData.slides[index];
+            const slide = slides[index];
             const container = document.getElementById('contentContainer');
             
-            // Render Content
             container.innerHTML = ''; 
-            
-            // Treat everything as a URL (iframe)
             const iframe = document.createElement('iframe');
             iframe.src = slide.url;
             iframe.sandbox = "allow-scripts allow-same-origin allow-forms";
             container.appendChild(iframe);
 
-            // Schedule Next
             const duration = (slide.duration || 10) * 1000;
             slideTimeout = setTimeout(() => {
-                currentSlideIndex = (currentSlideIndex + 1) % kioskData.slides.length;
+                currentSlideIndex = (currentSlideIndex + 1) % slides.length;
                 showSlide(currentSlideIndex);
             }, duration);
         }
@@ -258,7 +353,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `smart-player.html`;
+    a.download = `smart-player-sql.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -290,12 +385,12 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
                <button 
                 type="button"
-                onClick={downloadMasterJson}
+                onClick={downloadMasterDb}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95"
-                title="הורד קובץ הגדרות מצרפי (JSON)"
+                title="הורד מסד נתונים (SQLite)"
                >
-                 <FileJson size={20} />
-                 <span>Master JSON</span>
+                 <Database size={20} />
+                 <span>Master DB</span>
                </button>
              </>
           )}
@@ -304,10 +399,10 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             type="button"
             onClick={downloadSmartPlayer}
             className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-200 px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95"
-            title="הורד נגן Smart HTML שקורא מקובץ ה-JSON"
+            title="הורד נגן Smart HTML שקורא ממסד נתונים"
           >
             <FileCode size={20} />
-            <span>הורד נגן (Smart)</span>
+            <span>הורד נגן (SQL)</span>
           </button>
 
           <button 
@@ -337,7 +432,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               <p className="text-sm text-slate-400 mt-1">{kiosk.location}</p>
               <div className="mt-3 text-xs text-slate-500 flex items-center gap-1.5 bg-slate-900/50 p-2 rounded-lg w-fit">
                 <Play size={12} className="text-blue-400"/>
-                <span>{kiosk.slides.length} שקופיות</span>
+                <span>{kiosk.slides.length} קישורים</span>
               </div>
             </div>
 
@@ -368,22 +463,22 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               <div className="p-6 border-b border-slate-800">
                   <h3 className="text-xl font-bold text-white flex items-center gap-2">
                       <Settings className="text-blue-500" />
-                      הגדרות שרת (IIS)
+                      הגדרות שרת (SQLite)
                   </h3>
               </div>
               <div className="p-6">
                   <p className="text-slate-400 text-sm mb-4">
-                      כדי שהנגנים יעבדו, עליך לייצא את קובץ ה-Master JSON ולמקם אותו בשרת ה-IIS שלך.
+                      כדי שהנגנים יעבדו, עליך לייצא את קובץ ה-Master DB ולמקם אותו בשרת ה-IIS שלך.
                       <br/>
-                      הזן כאן את כתובת ה-URL המלאה שבה הקובץ יהיה זמין.
+                      הזן כאן את כתובת ה-URL המלאה שבה הקובץ (.sqlite) יהיה זמין.
                   </p>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Master JSON URL</label>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Master DB URL</label>
                   <input 
                       type="text" 
-                      defaultValue={settings.jsonServerUrl}
+                      defaultValue={settings.dbServerUrl}
                       id="setting-url"
                       className="w-full bg-slate-800 border border-slate-600 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none dir-ltr font-mono text-sm"
-                      placeholder="http://your-server/kiosk-data.json"
+                      placeholder="http://your-server/master.sqlite"
                       dir="ltr"
                   />
               </div>
@@ -437,10 +532,10 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               <div className="mb-6 flex justify-between items-end border-b border-slate-800 pb-4">
                 <h4 className="font-bold text-lg text-white flex items-center gap-2">
                   <Play className="text-blue-500" size={20} />
-                  רשימת השמעה (Playlist)
+                  רשימת קישורים
                 </h4>
                 <button type="button" onClick={addSlide} className="flex items-center gap-2 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/20">
-                  <Plus size={16} /> הוסף שקופית
+                  <Plus size={16} /> הוסף קישור
                 </button>
               </div>
 
@@ -487,7 +582,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 {selectedKiosk.slides.length === 0 && (
                   <div className="text-center py-12 text-slate-500 border-2 border-dashed border-slate-700 rounded-xl bg-slate-800/50">
                     <div className="flex justify-center mb-2"><Plus className="opacity-50" size={32}/></div>
-                    אין שקופיות להצגה. הוסף שקופית חדשה.
+                    אין קישורים להצגה. הוסף קישור חדש.
                   </div>
                 )}
               </div>
@@ -497,16 +592,26 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               <button 
                 type="button"
                 onClick={() => setIsEditing(false)}
-                className="px-6 py-2.5 text-slate-300 hover:bg-slate-800 rounded-lg font-medium transition-colors"
+                disabled={isSaving}
+                className="px-6 py-2.5 text-slate-300 hover:bg-slate-800 rounded-lg font-medium transition-colors disabled:opacity-50"
               >
                 ביטול
               </button>
               <button 
                 type="button"
                 onClick={handleSave}
-                className="px-6 py-2.5 bg-blue-600 text-white hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-900/40 transition-colors"
+                disabled={isSaving || !sqlJsLoaded}
+                className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={!sqlJsLoaded ? 'טוען רכיבי SQL...' : ''}
               >
-                שמור שינויים
+                {isSaving ? (
+                  <>
+                    <Loader2 className="animate-spin" size={18} />
+                    שומר לשרת...
+                  </>
+                ) : (
+                  'שמור שינויים'
+                )}
               </button>
             </div>
           </div>

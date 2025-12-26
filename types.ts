@@ -44,5 +44,5 @@ export interface AuthState {
 }
 
 export interface SystemSettings {
-  jsonServerUrl: string; // The URL on the IIS server where the master JSON is hosted
+  dbServerUrl: string; // The URL on the IIS server where the SQLite DB is hosted/saved
 }

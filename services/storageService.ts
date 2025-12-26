@@ -108,7 +108,7 @@ export const addLog = (username: string, action: string, details: string): void 
 // System Settings
 export const getSettings = (): SystemSettings => {
   const defaults: SystemSettings = {
-    jsonServerUrl: 'http://localhost/kiosk-data.json'
+    dbServerUrl: 'http://localhost/master.sqlite'
   };
   return JSON.parse(localStorage.getItem(SETTINGS_KEY) || JSON.stringify(defaults));
 };
