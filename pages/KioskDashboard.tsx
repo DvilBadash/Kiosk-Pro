@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getKiosks, saveKiosk, addLog, getSettings } from '../services/storageService';
 import { Kiosk, Slide, ContentType, User, UserRole } from '../types';
-import { Edit, Monitor, Play, Plus, Trash2, Clock, Server, Database, FileCode, Loader2 } from 'lucide-react';
+import { Edit, Monitor, Play, Plus, Trash2, Clock, Server, Database, FileCode, Loader2, Wifi, WifiOff, Power } from 'lucide-react';
 
 interface Props {
   currentUser: User;
@@ -47,6 +47,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
       id: newId,
       name: `עמדה חדשה ${kiosks.length + 1}`,
       location: 'מיקום לא מוגדר',
+      isActive: true,
       slides: []
     };
     
@@ -76,7 +77,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
     // Create Tables
     db.run("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);");
-    db.run("CREATE TABLE kiosks (id TEXT PRIMARY KEY, name TEXT, location TEXT);");
+    db.run("CREATE TABLE kiosks (id TEXT PRIMARY KEY, name TEXT, location TEXT, is_active INTEGER);");
     db.run("CREATE TABLE slides (id TEXT PRIMARY KEY, kiosk_id TEXT, type TEXT, url TEXT, duration INTEGER, sort_order INTEGER, title TEXT);");
 
     // Insert Metadata
@@ -84,8 +85,10 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
     // Insert Data
     for (const kiosk of kiosksList) {
-        db.run("INSERT INTO kiosks VALUES (?, ?, ?)", [kiosk.id, kiosk.name, kiosk.location]);
+        db.run("INSERT INTO kiosks VALUES (?, ?, ?, ?)", [kiosk.id, kiosk.name, kiosk.location, kiosk.isActive ? 1 : 0]);
         
+        // Only insert slides if kiosk is active? Or allow data but client filters?
+        // Let's insert all, and client can decide or we query.
         kiosk.slides.forEach((slide, index) => {
             db.run("INSERT INTO slides VALUES (?, ?, ?, ?, ?, ?, ?)", [
                 slide.id,
@@ -285,8 +288,21 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 db = new SQL.Database(new Uint8Array(buf));
                 document.getElementById('statusText').innerText = "DB Loaded. Querying...";
 
-                // 4. Query Slides
-                // Note: We use prepare/bind/step for safety, though inputs are trusted
+                // 4. Check Status (isActive)
+                const statusStmt = db.prepare("SELECT is_active FROM kiosks WHERE id = :id");
+                statusStmt.bind({':id': kioskId});
+                if (!statusStmt.step()) {
+                    throw new Error('Kiosk ID not found in database.');
+                }
+                const statusRow = statusStmt.getAsObject();
+                statusStmt.free();
+
+                if (!statusRow.is_active) {
+                    showError('Kiosk is disabled by administrator.');
+                    return; 
+                }
+
+                // 5. Query Slides
                 const stmt = db.prepare("SELECT url, duration, type FROM slides WHERE kiosk_id = :id ORDER BY sort_order ASC");
                 stmt.bind({':id': kioskId});
                 
@@ -298,14 +314,8 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 stmt.free();
 
                 if (slides.length === 0) {
-                    // Check if kiosk exists just to give better error
-                    const kStmt = db.prepare("SELECT name FROM kiosks WHERE id = :id");
-                    kStmt.bind({':id': kioskId});
-                    if(kStmt.step()) {
-                        throw new Error('Kiosk found but has no slides.');
-                    } else {
-                        throw new Error('Kiosk ID not found in database.');
-                    }
+                     showError('Kiosk is active but has no content assigned.');
+                     return;
                 }
 
                 document.getElementById('loader').style.display = 'none';
@@ -405,11 +415,22 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
       {/* Kiosk Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {kiosks.map((kiosk) => {
+          // Status Logic: Active AND has slides
+          const isOperational = kiosk.isActive && kiosk.slides.length > 0;
+
           return (
-          <div key={kiosk.id} className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 hover:border-slate-600 transition-all p-5 flex flex-col group">
+          <div key={kiosk.id} className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 hover:border-slate-600 transition-all p-5 flex flex-col group relative">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <span className="bg-slate-700 text-slate-300 text-[10px] font-mono px-2 py-0.5 rounded uppercase">{kiosk.id.split('-')[1]}</span>
+              </div>
+              
+              {/* Status Icon */}
+              <div 
+                className={`w-8 h-8 rounded-full flex items-center justify-center shadow-lg transition-colors ${isOperational ? 'bg-green-500/20 text-green-500' : 'bg-slate-700 text-slate-500'}`}
+                title={isOperational ? 'פעיל ומציג' : 'לא פעיל'}
+              >
+                  {isOperational ? <Wifi size={16} /> : <WifiOff size={16} />}
               </div>
             </div>
             
@@ -452,8 +473,10 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             </div>
 
             <div className="p-8 overflow-y-auto flex-1 custom-scrollbar">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                 <div>
+              
+              {/* Top Controls: Name, Location, Status */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 mb-8">
+                 <div className="md:col-span-4">
                    <label className="block text-sm font-medium text-slate-400 mb-2">שם העמדה</label>
                    <input 
                      type="text" 
@@ -462,7 +485,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                      className={`w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-${themeColor}-500 outline-none`}
                    />
                  </div>
-                 <div>
+                 <div className="md:col-span-4">
                    <label className="block text-sm font-medium text-slate-400 mb-2">מיקום</label>
                    <input 
                      type="text" 
@@ -470,6 +493,26 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                      onChange={(e) => setSelectedKiosk({...selectedKiosk, location: e.target.value})}
                      className={`w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-${themeColor}-500 outline-none`}
                    />
+                 </div>
+                 <div className="md:col-span-4">
+                   <label className="block text-sm font-medium text-slate-400 mb-2">סטטוס פעילות</label>
+                   <button 
+                     type="button"
+                     onClick={() => setSelectedKiosk({...selectedKiosk, isActive: !selectedKiosk.isActive})}
+                     className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${
+                        selectedKiosk.isActive 
+                        ? `bg-green-900/20 border-green-500/50 text-green-400` 
+                        : `bg-slate-800 border-slate-600 text-slate-400`
+                     }`}
+                   >
+                       <span className="flex items-center gap-2 font-medium">
+                           <Power size={18} />
+                           {selectedKiosk.isActive ? 'פעיל (ON)' : 'כבוי (OFF)'}
+                       </span>
+                       <div className={`w-10 h-5 rounded-full relative transition-colors ${selectedKiosk.isActive ? 'bg-green-500' : 'bg-slate-600'}`}>
+                           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${selectedKiosk.isActive ? 'right-1' : 'right-6'}`} />
+                       </div>
+                   </button>
                  </div>
               </div>
 

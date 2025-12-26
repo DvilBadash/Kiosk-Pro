@@ -27,6 +27,7 @@ export interface Kiosk {
   id: string;
   name: string;
   location: string;
+  isActive: boolean; // Status field
   slides: Slide[];
 }
 

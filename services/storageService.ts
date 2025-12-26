@@ -22,6 +22,7 @@ const initStorage = () => {
       id: `kiosk-${i + 1}`,
       name: `קיוסק ייצור ${i + 1}`,
       location: `אולם ${Math.floor(i / 5) + 1}`,
+      isActive: i % 4 !== 0, // Randomize active state for demo (mostly active)
       slides: [
         {
           id: `slide-${i}-1`,
@@ -68,7 +69,12 @@ export const deleteUser = (username: string): void => {
 
 // Kiosk Services
 export const getKiosks = (): Kiosk[] => {
-  return JSON.parse(localStorage.getItem(KIOSKS_KEY) || '[]');
+  const kiosks = JSON.parse(localStorage.getItem(KIOSKS_KEY) || '[]');
+  // Migration helper: ensure new field exists on old data
+  return kiosks.map((k: Kiosk) => ({
+      ...k,
+      isActive: k.isActive ?? true
+  }));
 };
 
 export const getKioskById = (id: string): Kiosk | undefined => {
