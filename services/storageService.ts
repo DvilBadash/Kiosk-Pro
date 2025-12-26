@@ -108,9 +108,12 @@ export const addLog = (username: string, action: string, details: string): void 
 // System Settings
 export const getSettings = (): SystemSettings => {
   const defaults: SystemSettings = {
-    dbServerUrl: 'http://localhost/master.sqlite'
+    dbServerUrl: 'http://localhost/master.sqlite',
+    themeColor: 'blue'
   };
-  return JSON.parse(localStorage.getItem(SETTINGS_KEY) || JSON.stringify(defaults));
+  // Merge defaults with saved settings to ensure new fields exist
+  const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  return { ...defaults, ...saved };
 };
 
 export const saveSettings = (settings: SystemSettings): void => {

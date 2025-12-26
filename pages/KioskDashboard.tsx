@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getKiosks, saveKiosk, addLog, getSettings, saveSettings } from '../services/storageService';
+import { getKiosks, saveKiosk, addLog, getSettings } from '../services/storageService';
 import { Kiosk, Slide, ContentType, User, UserRole } from '../types';
-import { Edit, Monitor, Play, Plus, Trash2, Clock, Image as ImageIcon, Globe, Server, Download, FileCode, Settings, Database, Loader2 } from 'lucide-react';
+import { Edit, Monitor, Play, Plus, Trash2, Clock, Server, Database, FileCode, Loader2 } from 'lucide-react';
 
 interface Props {
   currentUser: User;
@@ -11,10 +11,11 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
   const [kiosks, setKiosks] = useState<Kiosk[]>([]);
   const [selectedKiosk, setSelectedKiosk] = useState<Kiosk | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState(getSettings());
   const [isSaving, setIsSaving] = useState(false);
   const [sqlJsLoaded, setSqlJsLoaded] = useState(false);
+  
+  // Read theme for display
+  const themeColor = getSettings().themeColor || 'blue';
 
   useEffect(() => {
     setKiosks(getKiosks());
@@ -105,6 +106,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
   const handleSave = async () => {
     if (!selectedKiosk) return;
+    const currentSettings = getSettings(); // Read fresh settings
 
     setIsSaving(true);
 
@@ -126,11 +128,11 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
       // 3. Attempt to push to Server
       try {
-        if (!settings.dbServerUrl || (settings.dbServerUrl.includes('localhost') && window.location.protocol === 'https:')) {
+        if (!currentSettings.dbServerUrl || (currentSettings.dbServerUrl.includes('localhost') && window.location.protocol === 'https:')) {
            // check mixed content
         }
 
-        const response = await fetch(settings.dbServerUrl, {
+        const response = await fetch(currentSettings.dbServerUrl, {
             method: 'POST', 
             headers: {
             'Content-Type': 'application/x-sqlite3',
@@ -157,14 +159,6 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
       setIsEditing(false);
       setSelectedKiosk(null);
     }
-  };
-
-  const handleSaveSettings = (newUrl: string) => {
-      const newSettings = { dbServerUrl: newUrl };
-      saveSettings(newSettings);
-      setSettings(newSettings);
-      setShowSettings(false);
-      addLog(currentUser.username, 'UPDATE_SETTINGS', 'עודכנה כתובת שרת DB');
   };
 
   const updateSlide = (index: number, field: keyof Slide, value: any) => {
@@ -214,6 +208,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
 
   // --- HTML Generator Logic (Smart Player with SQL) ---
   const downloadSmartPlayer = () => {
+    const currentSettings = getSettings();
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -248,7 +243,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
     </div>
 
     <script>
-        const DB_URL = '${settings.dbServerUrl}'; 
+        const DB_URL = '${currentSettings.dbServerUrl}'; 
         const urlParams = new URLSearchParams(window.location.search);
         const kioskId = urlParams.get('id');
 
@@ -367,7 +362,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
           <h2 className="text-3xl font-bold text-white mb-2">ניהול עמדות קיוסק</h2>
           <div className="text-slate-400 flex items-center gap-2">
             <Server size={16} />
-            סה"כ עמדות: <span className="text-blue-400 font-bold">{kiosks.length}</span>
+            סה"כ עמדות: <span className={`text-${themeColor}-400 font-bold`}>{kiosks.length}</span>
           </div>
         </div>
         
@@ -376,17 +371,8 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
              <>
                <button 
                 type="button"
-                onClick={() => setShowSettings(true)}
-                className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 px-4 py-3 rounded-xl transition-all"
-                title="הגדרות מערכת"
-               >
-                 <Settings size={20} />
-               </button>
-
-               <button 
-                type="button"
                 onClick={downloadMasterDb}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95"
+                className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg active:scale-95`}
                 title="הורד מסד נתונים (SQLite)"
                >
                  <Database size={20} />
@@ -402,13 +388,13 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             title="הורד נגן Smart HTML שקורא ממסד נתונים"
           >
             <FileCode size={20} />
-            <span>הורד נגן (SQL)</span>
+            <span>הורד Viewer</span>
           </button>
 
           <button 
             type="button"
             onClick={handleAddNewKiosk}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+            className={`flex items-center gap-2 bg-${themeColor}-600 hover:bg-${themeColor}-500 text-white px-5 py-3 rounded-xl transition-all shadow-lg shadow-${themeColor}-900/20 active:scale-95`}
           >
             <Plus size={20} />
             <span>הוסף עמדה</span>
@@ -428,10 +414,10 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
             </div>
             
             <div className="flex-1 mb-6">
-              <h3 className="font-bold text-lg text-slate-100 truncate group-hover:text-blue-400 transition-colors" title={kiosk.name}>{kiosk.name}</h3>
+              <h3 className={`font-bold text-lg text-slate-100 truncate group-hover:text-${themeColor}-400 transition-colors`} title={kiosk.name}>{kiosk.name}</h3>
               <p className="text-sm text-slate-400 mt-1">{kiosk.location}</p>
               <div className="mt-3 text-xs text-slate-500 flex items-center gap-1.5 bg-slate-900/50 p-2 rounded-lg w-fit">
-                <Play size={12} className="text-blue-400"/>
+                <Play size={12} className={`text-${themeColor}-400`}/>
                 <span>{kiosk.slides.length} קישורים</span>
               </div>
             </div>
@@ -447,7 +433,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
               <button
                 type="button"
                 onClick={() => openClient(kiosk.id)}
-                className="flex-1 flex items-center justify-center gap-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-600/20 py-2.5 rounded-lg text-sm transition-colors font-medium"
+                className={`flex-1 flex items-center justify-center gap-2 bg-${themeColor}-600/10 hover:bg-${themeColor}-600/20 text-${themeColor}-400 border border-${themeColor}-600/20 py-2.5 rounded-lg text-sm transition-colors font-medium`}
               >
                 <Monitor size={14} /> צפייה
               </button>
@@ -455,48 +441,6 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
           </div>
         )})}
       </div>
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-           <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg">
-              <div className="p-6 border-b border-slate-800">
-                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Settings className="text-blue-500" />
-                      הגדרות שרת (SQLite)
-                  </h3>
-              </div>
-              <div className="p-6">
-                  <p className="text-slate-400 text-sm mb-4">
-                      כדי שהנגנים יעבדו, עליך לייצא את קובץ ה-Master DB ולמקם אותו בשרת ה-IIS שלך.
-                      <br/>
-                      הזן כאן את כתובת ה-URL המלאה שבה הקובץ (.sqlite) יהיה זמין.
-                  </p>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Master DB URL</label>
-                  <input 
-                      type="text" 
-                      defaultValue={settings.dbServerUrl}
-                      id="setting-url"
-                      className="w-full bg-slate-800 border border-slate-600 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none dir-ltr font-mono text-sm"
-                      placeholder="http://your-server/master.sqlite"
-                      dir="ltr"
-                  />
-              </div>
-              <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-2xl">
-                  <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">ביטול</button>
-                  <button 
-                    onClick={() => {
-                        const val = (document.getElementById('setting-url') as HTMLInputElement).value;
-                        handleSaveSettings(val);
-                    }} 
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow-lg"
-                  >
-                      שמור הגדרות
-                  </button>
-              </div>
-           </div>
-        </div>
-      )}
 
       {/* Edit Modal */}
       {isEditing && selectedKiosk && (
@@ -515,7 +459,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                      type="text" 
                      value={selectedKiosk.name}
                      onChange={(e) => setSelectedKiosk({...selectedKiosk, name: e.target.value})}
-                     className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                     className={`w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-${themeColor}-500 outline-none`}
                    />
                  </div>
                  <div>
@@ -524,17 +468,17 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                      type="text" 
                      value={selectedKiosk.location}
                      onChange={(e) => setSelectedKiosk({...selectedKiosk, location: e.target.value})}
-                     className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                     className={`w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-${themeColor}-500 outline-none`}
                    />
                  </div>
               </div>
 
               <div className="mb-6 flex justify-between items-end border-b border-slate-800 pb-4">
                 <h4 className="font-bold text-lg text-white flex items-center gap-2">
-                  <Play className="text-blue-500" size={20} />
+                  <Play className={`text-${themeColor}-500`} size={20} />
                   רשימת קישורים
                 </h4>
-                <button type="button" onClick={addSlide} className="flex items-center gap-2 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/20">
+                <button type="button" onClick={addSlide} className={`flex items-center gap-2 text-sm bg-${themeColor}-600 text-white px-4 py-2 rounded-lg hover:bg-${themeColor}-500 transition-colors shadow-lg shadow-${themeColor}-900/20`}>
                   <Plus size={16} /> הוסף קישור
                 </button>
               </div>
@@ -553,7 +497,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                            type="text" 
                            value={slide.url}
                            onChange={(e) => updateSlide(idx, 'url', e.target.value)}
-                           className="w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-sm ltr-text focus:border-blue-500 outline-none font-mono"
+                           className={`w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-sm ltr-text focus:border-${themeColor}-500 outline-none font-mono`}
                            dir="ltr"
                          />
                       </div>
@@ -566,7 +510,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                              min="5"
                              value={slide.duration}
                              onChange={(e) => updateSlide(idx, 'duration', parseInt(e.target.value))}
-                             className="w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-sm pl-10 focus:border-blue-500 outline-none"
+                             className={`w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-sm pl-10 focus:border-${themeColor}-500 outline-none`}
                            />
                            <Clock size={16} className="absolute left-3 top-2.5 text-slate-500" />
                          </div>
@@ -601,7 +545,7 @@ const KioskDashboard: React.FC<Props> = ({ currentUser }) => {
                 type="button"
                 onClick={handleSave}
                 disabled={isSaving || !sqlJsLoaded}
-                className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`flex items-center gap-2 px-6 py-2.5 bg-${themeColor}-600 text-white hover:bg-${themeColor}-500 rounded-lg font-medium shadow-lg shadow-${themeColor}-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                 title={!sqlJsLoaded ? 'טוען רכיבי SQL...' : ''}
               >
                 {isSaving ? (

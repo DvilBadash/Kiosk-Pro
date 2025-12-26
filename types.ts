@@ -45,4 +45,5 @@ export interface AuthState {
 
 export interface SystemSettings {
   dbServerUrl: string; // The URL on the IIS server where the SQLite DB is hosted/saved
+  themeColor: string; // 'blue', 'purple', 'emerald', 'rose', 'amber'
 }

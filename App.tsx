@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import KioskDashboard from './pages/KioskDashboard';
 import UsersManager from './pages/UsersManager';
+import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import ClientPlayer from './pages/ClientPlayer';
 import { User, UserRole } from './types';
@@ -57,6 +58,14 @@ const App: React.FC = () => {
                     } 
                   />
                   <Route path="logs" element={<Logs />} />
+                  <Route 
+                    path="settings" 
+                    element={
+                        user.role === UserRole.ADMIN ?
+                        <Settings currentUser={user} /> :
+                        <Navigate to="/admin/dashboard" />
+                    } 
+                  />
                   <Route path="*" element={<Navigate to="dashboard" />} />
                 </Routes>
               </Layout>
